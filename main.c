@@ -48,21 +48,30 @@
 * Macros
 ********************************************************************************/
 /* The input message size (inclusive of the string terminating character '\0').
- * Edit this macro to suit your message size */
+ * Edit this macro to suit your message size.
+ */
 #define MAX_MESSAGE_SIZE                     (100u)
 
-#define ASCII_RETURN_CARRIAGE                (0x0D)
-
 /* Size of the message block that can be processed by Crypto hardware for
- * AES encryption */
+ * AES encryption.
+ */
 #define AES128_ENCRYPTION_LENGTH             (uint32_t)(16u)
 
 #define AES128_KEY_LENGTH                    (uint32_t)(16u)
 
+/* \x1b[2J\x1b[;H - ANSI ESC sequence for clear screen. */
+#define CLEAR_SCREEN                         "\x1b[2J\x1b[;H"
+
+/* Number of bytes per line to be printed on the UART terminal. */
+#define BYTES_PER_LINE                       (16u)
+
+/* Time to wait to receive a character from UART terminal. */
+#define UART_INPUT_TIMEOUT_MS                (1u)
+
 #define SCREEN_HEADER "\r\n__________________________________________________"\
                       "____________________________\r\n*\t\tCE220465 PSoC 6 "\
-                    "Cryptography: AES Demonstration\r\n*\r\n*\tThis code"\
-                    "example demonstrates encryption and decryption of data"\
+                    "Cryptography: AES Demonstration\r\n*\r\n*\tThis code "\
+                    "example demonstrates encryption and decryption of data "\
                     "using\r\n*\tthe Advanced Encryption Scheme (AES) algorithm"\
                     " in PSoC 6 MCU.\r\n*\r\n*\tUART Terminal Settings: Baud Rate"\
                     "- 115200 bps, 8N1\r\n*"\
@@ -72,12 +81,6 @@
 #define SCREEN_HEADER1 "\r\n\n__________________________________________________"\
                   "____________________________\r\n"
 
-/* \x1b[2J\x1b[;H - ANSI ESC sequence for clear screen */
-#define CLEAR_SCREEN         "\x1b[2J\x1b[;H"
-
-/* Number of bytes per line to be printed on the UART terminal */
-#define BYTES_PER_LINE                        (16u)
-
 /*******************************************************************************
 * Data type definitions
 ********************************************************************************/
@@ -85,8 +88,7 @@
 typedef enum
 {
     MESSAGE_ENTER_NEW,
-    MESSAGE_READY,
-    MESSAGE_NOT_READY
+    MESSAGE_READY
 } message_status_t;
 
 /*******************************************************************************
@@ -110,7 +112,7 @@ CY_ALIGN(4) uint8_t decrypted_msg[MAX_MESSAGE_SIZE];
 cy_stc_crypto_aes_state_t aes_state;
 
 /* Key used for AES encryption*/
-CY_ALIGN(4) uint8_t AES_Key[AES128_KEY_LENGTH] = {0xAA, 0xBB, 0xCC, 0xDD,
+CY_ALIGN(4) uint8_t aes_key[AES128_KEY_LENGTH] = {0xAA, 0xBB, 0xCC, 0xDD,
                                                   0xEE, 0xFF, 0xFF, 0xEE,
                                                   0xDD, 0xCC, 0xBB, 0xAA,
                                                   0xAA, 0xBB, 0xCC, 0xDD,};
@@ -130,10 +132,11 @@ CY_ALIGN(4) uint8_t AES_Key[AES128_KEY_LENGTH] = {0xAA, 0xBB, 0xCC, 0xDD,
 *******************************************************************************/
 int main(void)
 {
-    cy_rslt_t result, uart_result;
+    cy_rslt_t result = CY_RSLT_SUCCESS;
 
     /* Variable to track the status of the message entered by the user */
     message_status_t msg_status = MESSAGE_ENTER_NEW;
+    
     uint8_t msg_size = 0;
     bool uart_status = false;
 
@@ -159,25 +162,23 @@ int main(void)
     /* Enable the Crypto block */
     Cy_Crypto_Core_Enable(CRYPTO);
 
+    printf("\r\nEnter the message:\r\n");
+
     for (;;)
     {
+
         switch (msg_status)
         {
             case MESSAGE_ENTER_NEW:
-                memset(message, 0, MAX_MESSAGE_SIZE);
-                msg_size = 0;
-                printf("\r\nEnter the message:\r\n");
-                uart_result = cyhal_uart_getc(&cy_retarget_io_uart_obj, &message[msg_size], 1);
-                msg_status = MESSAGE_NOT_READY;
-                break;
-
-            case MESSAGE_NOT_READY:
+            {
+                result = cyhal_uart_getc(&cy_retarget_io_uart_obj, &message[msg_size], UART_INPUT_TIMEOUT_MS);
                 uart_status = cyhal_uart_is_rx_active(&cy_retarget_io_uart_obj);
-                if (!uart_status && uart_result == CY_RSLT_SUCCESS)
+                if (!uart_status && result == CY_RSLT_SUCCESS)
                 {
                     /* Check if the ENTER Key is pressed. If pressed, set the message
-                     * status as MESSAGE_READY */
-                    if (message[msg_size] == ASCII_RETURN_CARRIAGE)
+                     * status as MESSAGE_READY.
+                     */
+                    if (message[msg_size] == '\r' || message[msg_size] == '\n')
                     {
                         message[msg_size]='\0';
                         msg_status = MESSAGE_READY;
@@ -185,30 +186,57 @@ int main(void)
                     else
                     {
                         cyhal_uart_putc(&cy_retarget_io_uart_obj, message[msg_size]);
-                        msg_size++;
+
+                        /* Check if Backspace is pressed by the user. */
+                        if(message[msg_size] != '\b')
+                        {
+                            msg_size++;
+                        }
+                        else
+                        {
+                            if(msg_size > 0)
+                            {
+                                msg_size--;
+                            }
+                        }
+
                         /* Check if size of the message  exceeds MAX_MESSAGE_SIZE
-                         * (inclusive of the string terminating character '\0')*/
+                         * (inclusive of the string terminating character '\0').
+                         */
                         if (msg_size > (MAX_MESSAGE_SIZE - 1))
                         {
-                            printf("\r\n\nMessage length exceeds 100 characters!!!"\
+                            printf("\r\n\nMessage length exceeds %d characters!!!"\
                             " Please enter a shorter message\r\nor edit the macro MAX_MESSAGE_SIZE"\
-                            " to suit your message size\r\n");
+                            " to suit your message size\r\n", MAX_MESSAGE_SIZE);
+
+                            /* Clear the message buffer and set the msg_status to accept
+                             * new message from the user.
+                             */
                             msg_status = MESSAGE_ENTER_NEW;
+                            memset(message, 0, MAX_MESSAGE_SIZE);
+                            msg_size = 0;
+                            printf("\r\nEnter the message:\r\n");
                             break;
                         }
                     }
                 }
-                uart_result = cyhal_uart_getc(&cy_retarget_io_uart_obj, &message[msg_size], 1);
                 break;
+            }
 
             case MESSAGE_READY:
+            {
                 encrypt_message(message, msg_size);
                 decrypt_message(message, msg_size);
-                msg_status = MESSAGE_ENTER_NEW;
-                break;
 
-            default:
+                /* Clear the message buffer and set the msg_status to accept
+                 * new message from the user.
+                 */
+                msg_status = MESSAGE_ENTER_NEW;
+                memset(message, 0, MAX_MESSAGE_SIZE);
+                msg_size = 0;
+                printf("\r\nEnter the message:\r\n");
                 break;
+            }
         }
     }
 }
@@ -256,16 +284,16 @@ void print_data(uint8_t* data, uint8_t len)
 *******************************************************************************/
 void encrypt_message(uint8_t* message, uint8_t size)
 {
-    uint8_t AES_block_count = 0;
+    uint8_t aes_block_count = 0;
 
-    AES_block_count =  (size % AES128_ENCRYPTION_LENGTH == 0) ?
+    aes_block_count =  (size % AES128_ENCRYPTION_LENGTH == 0) ?
                        (size / AES128_ENCRYPTION_LENGTH)
                        : (1 + size / AES128_ENCRYPTION_LENGTH);
 
     /* Initializes the AES operation by setting key and key length */
-    Cy_Crypto_Core_Aes_Init(CRYPTO, AES_Key, CY_CRYPTO_KEY_AES_128, &aes_state);
+    Cy_Crypto_Core_Aes_Init(CRYPTO, aes_key, CY_CRYPTO_KEY_AES_128, &aes_state);
 
-    for (int i = 0; i < AES_block_count ; i++)
+    for (int i = 0; i < aes_block_count ; i++)
     {
         /* Perform AES ECB Encryption mode of operation */
         Cy_Crypto_Core_Aes_Ecb(CRYPTO, CY_CRYPTO_ENCRYPT,
@@ -278,9 +306,9 @@ void encrypt_message(uint8_t* message, uint8_t size)
     }
 
     printf("\r\n\nKey used for Encryption:\r\n");
-    print_data(AES_Key, AES128_KEY_LENGTH);
+    print_data(aes_key, AES128_KEY_LENGTH);
     printf("\r\nResult of Encryption:\r\n");
-    print_data((uint8_t*) encrypted_msg, AES_block_count * AES128_ENCRYPTION_LENGTH);
+    print_data((uint8_t*) encrypted_msg, aes_block_count * AES128_ENCRYPTION_LENGTH);
 
     Cy_Crypto_Core_Aes_Free(CRYPTO, &aes_state);
 }
@@ -300,17 +328,17 @@ void encrypt_message(uint8_t* message, uint8_t size)
 *******************************************************************************/
 void decrypt_message(uint8_t* message, uint8_t size)
 {
-    uint8_t AES_block_count = 0;
+    uint8_t aes_block_count = 0;
 
-    AES_block_count =  (size % AES128_ENCRYPTION_LENGTH == 0) ?
+    aes_block_count =  (size % AES128_ENCRYPTION_LENGTH == 0) ?
                        (size / AES128_ENCRYPTION_LENGTH)
                        : (1 + size / AES128_ENCRYPTION_LENGTH);
 
     /* Initializes the AES operation by setting key and key length */
-    Cy_Crypto_Core_Aes_Init(CRYPTO, AES_Key, CY_CRYPTO_KEY_AES_128, &aes_state);
+    Cy_Crypto_Core_Aes_Init(CRYPTO, aes_key, CY_CRYPTO_KEY_AES_128, &aes_state);
 
     /* Start decryption operation*/
-    for (int i = 0; i < AES_block_count ; i++)
+    for (int i = 0; i < aes_block_count ; i++)
     {
         /* Perform AES ECB Decryption mode of operation */
         Cy_Crypto_Core_Aes_Ecb(CRYPTO, CY_CRYPTO_DECRYPT,
